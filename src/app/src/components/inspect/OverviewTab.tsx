@@ -153,6 +153,15 @@ export default function OverviewTab({ selectedTrace, setActiveTab }: OverviewTab
               <span className="attribute-card__val mono">{selectedTrace.prompt + selectedTrace.completion}</span>
             </div>
           )}
+          {/* matched_rule is legitimately empty when no rule matched, and
+              default_used already says so -- an empty card just reads as a
+              rendering fault. */}
+          {selectedTrace.route && Object.entries(selectedTrace.route).filter(([, value]) => value !== '').sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
+            <div className="attribute-card" key={`route-${key}`}>
+              <span className="attribute-card__key">llm.route.{key}</span>
+              <span className="attribute-card__val mono">{String(value)}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

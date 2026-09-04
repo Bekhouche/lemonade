@@ -91,6 +91,11 @@ export interface Trace {
   device?: string;
   checkpoint?: string;
 
+  // routing: every llm.route.* span attribute, keyed by the part after the
+  // prefix. Kept as an open map rather than named fields so a new attribute
+  // on the server side shows up here without a matching change in the UI.
+  route?: Record<string, string | number | boolean>;
+
   // diagnostics / improve
   diag?: { level: 'warn' | 'danger' | 'info'; title: string; detail: string };
   improveData?: OptimizedPromptData | null;
@@ -230,6 +235,7 @@ class InspectStoreClass {
               backend: t.backend,
               device: t.device,
               checkpoint: t.checkpoint,
+              route: t.route && typeof t.route === 'object' ? t.route : undefined,
               diag: t.diag,
               improveData: t.improveData,
               improveRawOutput: t.improveRawOutput
@@ -555,6 +561,17 @@ function parseOtelSpan(span: OtelSpan): Trace | null {
     }
   }
 
+  // A collection.router decision arrives as llm.route.* attributes. Absent on
+  // a request that was not routed, which is why route stays undefined rather
+  // than an empty object -- the UI keys off that to hide the section.
+  let routeAttrs: Record<string, string | number | boolean> | undefined;
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith('llm.route.')) {
+      if (!routeAttrs) routeAttrs = {};
+      routeAttrs[key.slice('llm.route.'.length)] = value;
+    }
+  }
+
   // Extract kind
   let kind: Trace['kind'] = 'LLM';
   const spanKindAttr = attrs['openinference.span.kind'];
@@ -705,6 +722,7 @@ function parseOtelSpan(span: OtelSpan): Trace | null {
     checkpoint: attrs['llm.checkpoint'] !== undefined || attrs['checkpoint'] !== undefined
       ? String(attrs['llm.checkpoint'] ?? attrs['checkpoint'])
       : undefined,
+    route: routeAttrs,
     diag
   };
 }
