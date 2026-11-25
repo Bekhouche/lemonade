@@ -472,6 +472,8 @@ json TheNoiseServer::video_generations(const json& request, std::atomic<bool>* c
         return result;
     };
     if (canceled()) return canceled_result(true);
+    if (request.contains("control_frames") && !request["control_frames"].is_null())
+        return error("TheNoise does not take control_frames", 400);
 
     // VideoSpec is strict: do not forward the image request, Lemonade's model
     // alias, ctx_size, clip_file or other job bookkeeping. Only explicit recipe
