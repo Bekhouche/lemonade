@@ -19,8 +19,10 @@ which is how CI runs this file:
 import base64
 import io
 import os
+import struct
 import time
 import unittest
+import zlib
 
 import requests
 
@@ -62,6 +64,42 @@ TERMINAL = {"completed", "failed", "canceled"}
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 )
+
+
+def moving_square_frames(count, width=480, height=320, side=96):
+    """PNG frames of a red square crossing a blue background, as base64."""
+
+    def png(rows):
+        def chunk(kind, data):
+            body = kind + data
+            return (
+                struct.pack(">I", len(data))
+                + body
+                + struct.pack(">I", zlib.crc32(body))
+            )
+
+        raw = b"".join(b"\x00" + row for row in rows)
+        header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b"")
+        )
+
+    frames = []
+    top = (height - side) // 2
+    for i in range(count):
+        left = (width - side) * i // max(count - 1, 1)
+        background = b"\x14\x28\xa0" * width
+        square = (
+            b"\x14\x28\xa0" * left
+            + b"\xe6\x1e\x1e" * side
+            + b"\x14\x28\xa0" * (width - left - side)
+        )
+        rows = [square if top <= y < top + side else background for y in range(height)]
+        frames.append(base64.b64encode(png(rows)).decode())
+    return frames
 
 
 class VideoGenerationTests(ServerTestBase):
@@ -593,6 +631,74 @@ class VideoGenerationTests(ServerTestBase):
             )
             self.assertIn("is a video model", response.text, endpoint)
         print("[OK] image generations, edits and variations refuse a video model")
+
+    def test_016_control_frames_are_checked(self):
+        """An edit is refused on a model that cannot take control frames, or with bad frames."""
+        frames = moving_square_frames(2, width=32, height=32, side=8)
+        response = requests.post(
+            f"{self.base_url}/videos",
+            json={"model": video_model(), "prompt": "a cat", "control_frames": frames},
+            timeout=TIMEOUT_DEFAULT,
+        )
+        self.assertEqual(response.status_code, 400, response.text[:300])
+        self.assertIn("does not take control_frames", response.text)
+
+        base = {"model": "user.does-not-exist", "prompt": "a cat"}
+        for bad in (
+            {"control_frames": []},
+            {"control_frames": "iVBORw0KGgo="},
+            {"control_frames": ["not base64!"]},
+            {"control_frames": ["data:text/plain;base64,QUFB"]},
+            {"vace_strength": -1},
+        ):
+            self._assert_rejected({**base, **bad}, f"{bad}")
+
+    def test_017_control_frames_stay_out_of_the_job_record(self):
+        """The frames are kept in a file, since the job store is rewritten on every transition."""
+        frames = moving_square_frames(9)
+        job_id = self._create(
+            {
+                "model": "user.does-not-exist",
+                "prompt": "a cat",
+                "control_frames": frames,
+            }
+        )
+        self._wait(job_id, timeout=TIMEOUT_MODEL_OPERATION)
+        job = requests.get(f"{self.base_url}/jobs/{job_id}", timeout=TIMEOUT_DEFAULT)
+        self.assertEqual(job.status_code, 200, job.text[:200])
+        self.assertNotIn(
+            frames[0][:64], job.text, "the frames were stored in the job record"
+        )
+        self.assertLess(
+            len(job.content), 16 * 1024, "the job record carries the frames"
+        )
+
+    @needs_video_model
+    def test_018_edits_a_video(self):
+        """Control frames produce a clip with as many frames as were sent."""
+        model = get_test_model("video_edit")
+        pull_model_with_retry(model)
+        job_id = self._create(
+            {
+                "model": model,
+                "prompt": "a golden cube sliding across a starry night sky",
+                "control_frames": moving_square_frames(9),
+                "fps": 8,
+                "steps": 4,
+                "width": 480,
+                "height": 320,
+            }
+        )
+        payload = self._wait(job_id)
+        self.assertEqual(payload["status"], "completed", f"edit failed: {payload}")
+        self.assertEqual(payload["frame_count"], 9)
+        content = requests.get(
+            f"{self.base_url}/videos/{job_id}/content", timeout=TIMEOUT_DEFAULT
+        )
+        self.assertEqual(content.status_code, 200, content.text[:200])
+        self.assertEqual(content.content[:4], WEBM_MAGIC)
+        unload_model(model)
+        print(f"[OK] edited clip: {len(content.content)} bytes, 9 frames")
 
 
 if __name__ == "__main__":

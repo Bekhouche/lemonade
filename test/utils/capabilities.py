@@ -362,6 +362,7 @@ CAPABILITIES = {
             },
             "test_models": {
                 "video": "Wan2.1-T2V-1.3B",
+                "video_edit": "Wan2.1-VACE-1.3B",
             },
         },
     },
