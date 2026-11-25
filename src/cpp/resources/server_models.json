@@ -2134,6 +2134,30 @@
             "fps": 16
         }
     },
+    "Wan2.1-VACE-1.3B": {
+        "checkpoints": {
+            "main": "Comfy-Org/Wan_2.1_ComfyUI_repackaged:split_files/diffusion_models/wan2.1_vace_1.3B_fp16.safetensors",
+            "t5xxl": "city96/umt5-xxl-encoder-gguf:umt5-xxl-encoder-Q8_0.gguf",
+            "vae": "Comfy-Org/Wan_2.1_ComfyUI_repackaged:split_files/vae/wan_2.1_vae.safetensors"
+        },
+        "recipe": "sd-cpp",
+        "suggested": true,
+        "labels": [
+            "video",
+            "video-edit"
+        ],
+        "size": 10.6,
+        "recipe_options": {
+            "steps": 20,
+            "cfg_scale": 5.0,
+            "width": 832,
+            "height": 480,
+            "sampling_method": "euler",
+            "flow_shift": 3.0,
+            "video_frames": 33,
+            "fps": 16
+        }
+    },
     "Wan2.2-TI2V-5B-TheNoise": {
         "checkpoints": {
             "main": "Comfy-Org/Wan-2.2:split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
