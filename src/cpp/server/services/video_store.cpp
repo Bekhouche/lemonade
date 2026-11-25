@@ -143,6 +143,10 @@ bool read_control_frames(const std::string& name, nlohmann::json& frames) {
     return frames.is_array();
 }
 
+bool takes_control_frames(const std::vector<std::string>& labels) {
+    return std::find(labels.begin(), labels.end(), "video-edit") != labels.end();
+}
+
 void clean_up(const std::function<CleanupSnapshot()>& snapshot) {
     std::lock_guard<std::mutex> lock(reservation_mutex());
     const CleanupSnapshot now = snapshot();

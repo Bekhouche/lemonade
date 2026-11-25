@@ -273,6 +273,12 @@ static void test_normalize_control_frames() {
     check("frames: rejects empty, non-image, malformed and too many frames, and a bad vace_strength", true);
 }
 
+static void test_takes_control_frames() {
+    check("label: video-edit takes control frames", store::takes_control_frames({"video", "video-edit"}));
+    check("label: a plain video model does not", !store::takes_control_frames({"video"}));
+    check("label: the image edit label does not", !store::takes_control_frames({"video", "edit"}));
+}
+
 int main() {
     test_file_names();
     test_write_read();
@@ -286,6 +292,7 @@ int main() {
     test_control_frames_file();
     test_hold();
     test_normalize_control_frames();
+    test_takes_control_frames();
     if (g_failures) {
         std::printf("%d FAILURE(S)\n", g_failures);
         return 1;

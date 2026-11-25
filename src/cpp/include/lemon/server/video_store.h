@@ -4,6 +4,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -65,6 +66,10 @@ inline constexpr size_t kMaxControlFramesBytes = 256u * 1024 * 1024;
 // The source video of an edit, as the base64 images the request sent.
 void write_control_frames(const std::string& name, const nlohmann::json& frames);
 bool read_control_frames(const std::string& name, nlohmann::json& frames);
+
+// Only a model labeled `video-edit` is sent control frames; the others would ignore
+// them. Not `edit`, which the app reads as image editing.
+bool takes_control_frames(const std::vector<std::string>& labels);
 
 // Checks the request's numbers once, for both the /videos route and a generic
 // generate_video job. An integer-valued float such as 9.0 is stored as the integer 9,
