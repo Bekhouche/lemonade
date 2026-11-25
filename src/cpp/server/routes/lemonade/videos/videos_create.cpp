@@ -4,6 +4,8 @@
 #include <lemon/utils/aixlog.hpp>
 
 #include "lemon/jobs/job_manager.h"
+#include "lemon/models/model_info.h"
+#include "lemon/router.h"
 #include "lemon/server/api_route.h"
 #include "lemon/server/shared_args.h"
 #include "lemon/server/video_store.h"
@@ -54,6 +56,16 @@ const RouteArg kFlowShift{"flow_shift", ArgIn::JsonBody, {{"type", "number"}}, f
 const RouteArg kVideoSteps{"steps", ArgIn::JsonBody,
                            {{"type", "integer"}, {"minimum", 1}, {"maximum", video_store::kMaxSteps}}, false,
                            Support::Available, "Number of sampling steps. Defaults to the model's own."};
+const RouteArg kControlFrames{"control_frames", ArgIn::JsonBody,
+                              {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", video_store::kMaxVideoFrames}},
+                              false, Support::Available,
+                              "The video to edit, as base64 images or image data URLs in frame order, at most 256 MiB "
+                              "in total. The model keeps their layout and motion and the prompt changes what they "
+                              "show. Needs a model labeled `video-edit`, such as `Wan2.1-VACE-1.3B`. `video_frames` "
+                              "defaults to the number of frames sent."};
+const RouteArg kVaceStrength{"vace_strength", ArgIn::JsonBody, {{"type", "number"}, {"minimum", 0}}, false,
+                             Support::Available,
+                             "How closely the clip follows `control_frames`. stable-diffusion.cpp defaults to 1."};
 const RouteArg kOutputFormat{"output_format", ArgIn::JsonBody, {{"enum", json::array({"webm", "webp", "avi", "mp4"})}},
                              false, Support::Available,
                              "Container format: `webm` (default), `webp` or `avi` (stable-diffusion.cpp), "
@@ -68,10 +80,11 @@ public:
         s.id = "lemonade.videos_create";
         s.methods = {"POST"};
         s.paths = {"videos"};
-        s.summary = "Generate a video from a text prompt";
+        s.summary = "Generate a video from a text prompt, or edit one";
         s.experimental = true;
         s.description =
-            "Starts generating a video from a text prompt and returns a handle at once. Generation "
+            "Starts generating a video from a text prompt, or editing the one sent as `control_frames`, "
+            "and returns a handle at once. Generation "
             "runs for minutes, so it is a job rather than a held connection: poll "
             "[`GET /v1/videos/{id}`](#get-v1videosid), then fetch the clip from "
             "[`GET /v1/videos/{id}/content`](#get-v1videosidcontent). It serves "
@@ -79,6 +92,8 @@ public:
             "[TheNoise](https://github.com/lemonade-sdk/thenoise) video models and is a Lemonade extension.";
         s.notes = {
             "The model loads when the job starts, not during this request.",
+            "With `control_frames` the request edits a video: the client sends the source clip as "
+            "images, so Lemonade needs no video decoder. They are kept on disk like the clip.",
             "The clip is kept on disk under the cache directory. Generating another video deletes the clips of deleted or evicted jobs.",
             "stable-diffusion.cpp generates a single frame when no frame count is given, and video "
             "models need a few dozen frames before they animate rather than drift, so Lemonade sends "
@@ -90,7 +105,8 @@ public:
         };
         s.args = {
             kPrompt, model_loading::kModel, kNegativePrompt, kDuration, kVideoFrames, kFps, kWidth, kHeight,
-            kVideoSteps, kCfgScale, kSamplingMethod, kFlowShift, inference::kSeed, kOutputFormat
+            kVideoSteps, kCfgScale, kSamplingMethod, kFlowShift, inference::kSeed, kOutputFormat,
+            kControlFrames, kVaceStrength
         };
 
         RouteResponse response;
@@ -131,10 +147,36 @@ public:
                 write_openai_error(res, kArgInvalid, error);
                 return;
             }
+            const bool editing = req.has(kControlFrames) && !req.arg(kControlFrames).is_null();
+            if (editing) {
+                if (const auto info = ctx_.router->try_get_model_info(model);
+                    info && !video_store::takes_control_frames(info->labels)) {
+                    write_openai_error(res, kArgInvalid,
+                                       "Model '" + model + "' does not take control_frames");
+                    return;
+                }
+            }
             // Set here, never taken from the client, and named before the job runs so
             // the clean-up below cannot remove a clip that is still being written.
             req.body["clip_file"] = video_store::new_file_name();
             remove_unreferenced_clips();
+
+            // The frames go to a file like the clip, since the job store is rewritten on
+            // every state change of every job.
+            std::string frames_file;
+            if (editing) {
+                frames_file = video_store::new_file_name();
+                video_store::hold(frames_file);
+                video_store::write_control_frames(frames_file, req.arg(kControlFrames));
+                req.body.erase(kControlFrames.name);
+                req.body["control_frames_file"] = frames_file;
+            }
+            struct ReleaseHold {
+                const std::string& name;
+                ~ReleaseHold() {
+                    if (!name.empty()) video_store::release(name);
+                }
+            } release_hold{frames_file};
 
             lemon::jobs::StepRecord step;
             step.id = "video";
@@ -179,9 +221,11 @@ private:
                 if (!job.contains("steps") || !job["steps"].is_array()) continue;
                 for (const auto& step : job["steps"]) {
                     for (const char* where : {"params", "output"}) {
-                        if (step.contains(where) && step[where].is_object() &&
-                            step[where].contains("clip_file") && step[where]["clip_file"].is_string())
-                            snapshot.referenced.insert(step[where]["clip_file"].get<std::string>());
+                        if (!step.contains(where) || !step[where].is_object()) continue;
+                        for (const char* key : {"clip_file", "control_frames_file"}) {
+                            if (step[where].contains(key) && step[where][key].is_string())
+                                snapshot.referenced.insert(step[where][key].get<std::string>());
+                        }
                     }
                 }
             }

@@ -261,6 +261,10 @@ lemon::jobs::OpProviders JobOps::build(ServerContext& ctx) {
             }
             if (info && get_model_type_from_labels(info->labels) != ModelType::VIDEO)
                 throw lemon::jobs::JobError(400, "model '" + model + "' is not a video model");
+            const bool editing = request.contains("control_frames_file") ||
+                (request.contains("control_frames") && !request["control_frames"].is_null());
+            if (info && editing && !video_store::takes_control_frames(info->labels))
+                throw lemon::jobs::JobError(400, "model '" + model + "' does not take control_frames");
             const bool was_loaded = router->is_model_loaded(model);
             model_loader->ensure_loaded(
                 model, ModelLoader::load_options(request.value("ctx_size", nlohmann::json())),
@@ -271,6 +275,14 @@ lemon::jobs::OpProviders JobOps::build(ServerContext& ctx) {
                 unload_if_interrupted();
                 throw lemon::jobs::JobError(499, "interrupted");
             }
+        }
+        if (request.contains("control_frames_file")) {
+            nlohmann::json frames;
+            const auto& name = request["control_frames_file"];
+            if (!name.is_string() || !video_store::read_control_frames(name.get<std::string>(), frames))
+                throw lemon::jobs::JobError(400, "the control frames of this video are gone");
+            request.erase("control_frames_file");
+            request["control_frames"] = std::move(frames);
         }
         nlohmann::json response = router->video_generations(request, &cancel);
         if (response.contains("error")) {
