@@ -223,6 +223,30 @@ static void test_video_status() {
           store::video_status(paused("pending")) == "paused");
 }
 
+static void test_normalize_control_frames() {
+    using nlohmann::json;
+    json ok = {{"control_frames", {"iVBORw0KGgo=", "data:image/jpeg;base64,/9j/4AAQ"}}, {"vace_strength", 0.5}};
+    check("frames: raw base64 and data URLs are accepted", store::normalize_request(ok).empty());
+    json zero = {{"vace_strength", 0}};
+    check("frames: a vace_strength of 0 is accepted", store::normalize_request(zero).empty());
+
+    json too_many = {{"control_frames", json::array()}};
+    for (int i = 0; i <= store::kMaxVideoFrames; ++i) too_many["control_frames"].push_back("QUFB");
+    for (const json& bad : {json{{"control_frames", json::array()}}, json{{"control_frames", "QUFB"}},
+                            json{{"control_frames", {1}}}, json{{"control_frames", {"not base64!"}}},
+                            json{{"control_frames", {"QUF"}}}, json{{"control_frames", {"QU=B"}}},
+                            json{{"control_frames", {"data:text/plain;base64,QUFB"}}},
+                            json{{"control_frames", {"data:image/png,QUFB"}}}, too_many,
+                            json{{"vace_strength", -0.1}}, json{{"vace_strength", "1"}}}) {
+        json copy = bad;
+        if (store::normalize_request(copy).empty()) {
+            check(("frames: rejects " + bad.dump().substr(0, 80)).c_str(), false);
+            return;
+        }
+    }
+    check("frames: rejects empty, non-image, malformed and too many frames, and a bad vace_strength", true);
+}
+
 int main() {
     test_file_names();
     test_write_read();
@@ -233,6 +257,7 @@ int main() {
     test_normalize_request();
     test_is_video_job();
     test_video_status();
+    test_normalize_control_frames();
     if (g_failures) {
         std::printf("%d FAILURE(S)\n", g_failures);
         return 1;

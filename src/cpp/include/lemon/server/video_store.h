@@ -54,6 +54,7 @@ inline constexpr int kMaxFps = 120;
 inline constexpr int kMaxDimension = 4096;
 inline constexpr int kMaxSteps = 1000;
 inline constexpr double kMaxDuration = 600.0;
+inline constexpr size_t kMaxControlFramesBytes = 256u * 1024 * 1024;
 
 // Checks the request's numbers once, for both the /videos route and a generic
 // generate_video job. An integer-valued float such as 9.0 is stored as the integer 9,

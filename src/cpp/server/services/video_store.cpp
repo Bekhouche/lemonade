@@ -12,6 +12,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 
 #include <lemon/utils/aixlog.hpp>
@@ -36,6 +37,25 @@ std::mutex& reservation_mutex() {
 std::map<std::string, std::string>& reserved() {
     static std::map<std::string, std::string> names;
     return names;
+}
+
+// Raw base64, or a data URL as sd-server also accepts.
+bool is_base64_image(const std::string& value) {
+    std::string_view data(value);
+    if (data.rfind("data:image/", 0) == 0) {
+        const auto comma = data.find(";base64,");
+        if (comma == std::string_view::npos) return false;
+        data.remove_prefix(comma + 8);
+    }
+    if (data.size() < 4 || data.size() % 4 != 0) return false;
+    const auto pad = data.find('=');
+    const size_t body = pad == std::string_view::npos ? data.size() : pad;
+    if (data.size() - body > 2) return false;
+    const auto is_char = [](unsigned char c) {
+        return std::isalnum(c) || c == '+' || c == '/';
+    };
+    return std::all_of(data.begin(), data.begin() + body, is_char) &&
+           std::all_of(data.begin() + body, data.end(), [](char c) { return c == '='; });
 }
 } // namespace
 
@@ -99,6 +119,7 @@ void release(const std::string& name) {
     std::lock_guard<std::mutex> lock(reservation_mutex());
     reserved().erase(name);
 }
+
 
 void clean_up(const std::function<CleanupSnapshot()>& snapshot) {
     std::lock_guard<std::mutex> lock(reservation_mutex());
@@ -167,6 +188,7 @@ std::string normalize_request(nlohmann::json& request) {
         {"duration", 0, kMaxDuration},
         {"cfg_scale", -std::numeric_limits<double>::max(), std::numeric_limits<double>::max()},
         {"flow_shift", -std::numeric_limits<double>::max(), std::numeric_limits<double>::max()},
+        {"vace_strength", 0, std::numeric_limits<double>::max()},
     };
     for (const auto& field : numbers) {
         if (!request.contains(field.name) || request[field.name].is_null()) continue;
@@ -175,6 +197,20 @@ std::string normalize_request(nlohmann::json& request) {
             return std::string("'") + field.name + "' must be a number";
         if (value.get<double>() < field.min || value.get<double>() > field.max)
             return std::string("'") + field.name + "' is out of range";
+    }
+    if (request.contains("control_frames") && !request["control_frames"].is_null()) {
+        const auto& frames = request["control_frames"];
+        if (!frames.is_array() || frames.empty())
+            return "'control_frames' must be a non-empty array of base64 images";
+        if (frames.size() > static_cast<size_t>(kMaxVideoFrames))
+            return "'control_frames' has more than " + std::to_string(kMaxVideoFrames) + " frames";
+        size_t total = 0;
+        for (const auto& frame : frames) {
+            if (!frame.is_string() || !is_base64_image(frame.get_ref<const std::string&>()))
+                return "each of 'control_frames' must be a base64 image or an image data URL";
+            total += frame.get_ref<const std::string&>().size();
+            if (total > kMaxControlFramesBytes) return "'control_frames' is larger than 256 MiB";
+        }
     }
     return "";
 }
