@@ -34,7 +34,13 @@ bool exists(const std::string& name);
 // recording it, or until the job is gone.
 std::string reserve_file_name(const std::string& preferred, const std::string& job_id);
 
-// Drops a reservation whose clip was never written, such as after a failed generation.
+// Keeps `name` from clean_up() until release(): the control frames are written before
+// the job that names them exists, and a concurrent clean-up would otherwise see them
+// as unreferenced.
+void hold(const std::string& name);
+
+// Drops a reservation or hold whose file is not needed any more, such as after a
+// failed generation.
 void release(const std::string& name);
 
 struct CleanupSnapshot {
@@ -55,6 +61,10 @@ inline constexpr int kMaxDimension = 4096;
 inline constexpr int kMaxSteps = 1000;
 inline constexpr double kMaxDuration = 600.0;
 inline constexpr size_t kMaxControlFramesBytes = 256u * 1024 * 1024;
+
+// The source video of an edit, as the base64 images the request sent.
+void write_control_frames(const std::string& name, const nlohmann::json& frames);
+bool read_control_frames(const std::string& name, nlohmann::json& frames);
 
 // Checks the request's numbers once, for both the /videos route and a generic
 // generate_video job. An integer-valued float such as 9.0 is stored as the integer 9,

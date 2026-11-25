@@ -10,6 +10,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -36,6 +37,11 @@ std::mutex& reservation_mutex() {
 // Clip name -> the job it was reserved for.
 std::map<std::string, std::string>& reserved() {
     static std::map<std::string, std::string> names;
+    return names;
+}
+
+std::set<std::string>& held() {
+    static std::set<std::string> names;
     return names;
 }
 
@@ -115,11 +121,27 @@ std::string reserve_file_name(const std::string& preferred, const std::string& j
     return name;
 }
 
+void hold(const std::string& name) {
+    std::lock_guard<std::mutex> lock(reservation_mutex());
+    held().insert(name);
+}
+
 void release(const std::string& name) {
     std::lock_guard<std::mutex> lock(reservation_mutex());
     reserved().erase(name);
+    held().erase(name);
 }
 
+void write_control_frames(const std::string& name, const nlohmann::json& frames) {
+    write(name, frames.dump());
+}
+
+bool read_control_frames(const std::string& name, nlohmann::json& frames) {
+    std::string bytes;
+    if (!read(name, bytes)) return false;
+    frames = nlohmann::json::parse(bytes, nullptr, false);
+    return frames.is_array();
+}
 
 void clean_up(const std::function<CleanupSnapshot()>& snapshot) {
     std::lock_guard<std::mutex> lock(reservation_mutex());
@@ -132,7 +154,9 @@ void clean_up(const std::function<CleanupSnapshot()>& snapshot) {
     std::error_code ec;
     for (fs::directory_iterator it(dir(), ec), end; !ec && it != end; it.increment(ec)) {
         const std::string name = utils::path_to_utf8(it->path().filename());
-        if (!is_valid_file_name(name) || now.referenced.count(name) || reserved().count(name)) continue;
+        if (!is_valid_file_name(name) || now.referenced.count(name) || reserved().count(name) ||
+            held().count(name))
+            continue;
         std::error_code rm;
         fs::remove(it->path(), rm);
         if (rm) LOG(WARNING, "Videos") << "Could not remove " << name << ": " << rm.message() << std::endl;

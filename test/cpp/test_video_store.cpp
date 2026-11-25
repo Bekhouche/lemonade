@@ -223,6 +223,32 @@ static void test_video_status() {
           store::video_status(paused("pending")) == "paused");
 }
 
+static void test_control_frames_file() {
+    using nlohmann::json;
+    const std::string name = store::new_file_name();
+    const json frames = json::array({"iVBORw0KGgo=", "data:image/png;base64,iVBORw0KGgo="});
+    store::write_control_frames(name, frames);
+    json back;
+    check("frames: written frames read back unchanged", store::read_control_frames(name, back) && back == frames);
+    check("frames: a missing file does not read", !store::read_control_frames(store::new_file_name(), back));
+    const std::string clip = store::new_file_name();
+    store::write(clip, "not json");
+    check("frames: a file that is not a frame list does not read", !store::read_control_frames(clip, back));
+    store::release(clip);
+    sweep({}, {});
+}
+
+static void test_hold() {
+    const std::string name = store::new_file_name();
+    store::hold(name);
+    store::write(name, "[]");
+    sweep({}, {});
+    check("hold: a held file survives a clean-up before its job exists", fs::exists(store::dir() / name));
+    store::release(name);
+    sweep({}, {});
+    check("hold: once released and unreferenced, it is cleaned up", !fs::exists(store::dir() / name));
+}
+
 static void test_normalize_control_frames() {
     using nlohmann::json;
     json ok = {{"control_frames", {"iVBORw0KGgo=", "data:image/jpeg;base64,/9j/4AAQ"}}, {"vace_strength", 0.5}};
@@ -257,6 +283,8 @@ int main() {
     test_normalize_request();
     test_is_video_job();
     test_video_status();
+    test_control_frames_file();
+    test_hold();
     test_normalize_control_frames();
     if (g_failures) {
         std::printf("%d FAILURE(S)\n", g_failures);
