@@ -725,6 +725,8 @@ json SDServer::video_generations(const json& request, std::atomic<bool>* cancel)
         const double max_steps = static_cast<double>((std::numeric_limits<int>::max() - 1) / 4);
         const double steps = std::clamp(std::round((wanted - 1.0) / 4.0), 0.0, max_steps);
         frames = 4 * static_cast<int>(steps) + 1;
+    } else if (request.contains("control_frames") && request["control_frames"].is_array()) {
+        frames = static_cast<int>(request["control_frames"].size());
     } else {
         frames = video_param("video_frames");
     }
@@ -738,6 +740,9 @@ json SDServer::video_generations(const json& request, std::atomic<bool>* cancel)
     }
     if (request.contains("output_format") && request["output_format"].is_string()) {
         body["output_format"] = request["output_format"];
+    }
+    if (request.contains("vace_strength") && request["vace_strength"].is_number()) {
+        body["vace_strength"] = request["vace_strength"];
     }
 
     // Sampling knobs live under sample_params, and cfg under its guidance
@@ -786,6 +791,11 @@ json SDServer::video_generations(const json& request, std::atomic<bool>* cancel)
 
     LOG(DEBUG, "SDServer") << "Forwarding video request to sd-server: "
                            << body.dump(2) << std::endl;
+    if (request.contains("control_frames") && request["control_frames"].is_array()) {
+        LOG(DEBUG, "SDServer") << "with " << request["control_frames"].size() << " control frames"
+                               << std::endl;
+        body["control_frames"] = request["control_frames"];
+    }
 
     // vid_gen is asynchronous: it answers 202 with a job handle and does the
     // work in the background. forward_request reports any non-200 as a backend
